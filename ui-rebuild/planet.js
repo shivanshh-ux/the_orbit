@@ -311,6 +311,7 @@ const setup3D = (targetCanvas, isPreloader = false) => {
         const planetColor2 = document.body.dataset.c2 || '#888888';
         const hasRings = document.body.dataset.rings === 'true';
         const isEarth = document.body.dataset.planet === 'earth';
+        const isSaturn = document.body.dataset.planet === 'saturn';
 
         const geo = new THREE.SphereGeometry(2.2, 64, 64);
         const mat = new THREE.ShaderMaterial({
@@ -773,6 +774,173 @@ const setup3D = (targetCanvas, isPreloader = false) => {
             // --- Dinosaur removal complete ---
         }
 
+        // --- Saturn Specific Inner World (Realistic Dusty Desert) ---
+        if (isSaturn) {
+            innerWorld = new THREE.Group();
+            innerWorld.position.z = -10;
+            innerWorld.visible = false;
+            scene.add(innerWorld);
+
+            // Saturn Sky Dome (Hazy Dusty Orange/Brown)
+            const skyGeo = new THREE.SphereGeometry(450, 32, 15);
+            const skyMat = new THREE.ShaderMaterial({
+                uniforms: {
+                    topColor: { value: new THREE.Color(0x4a3b32) }, // Darker dusty brown at top
+                    bottomColor: { value: new THREE.Color(0xdc9c64) }, // Bright hazy orange at horizon
+                    sunColor: { value: new THREE.Color(0xffcca0) },
+                    sunDirection: { value: new THREE.Vector3(100, 50, 50).normalize() }
+                },
+                vertexShader: skyVertexShader,
+                fragmentShader: skyFragmentShader,
+                side: THREE.BackSide,
+                transparent: true,
+                opacity: 0
+            });
+            const sky = new THREE.Mesh(skyGeo, skyMat);
+            innerWorld.add(sky);
+
+            // Lighting (Warm hazy sunlight)
+            const sunLight = new THREE.DirectionalLight(0xffcca0, 1.2);
+            sunLight.position.set(200, 100, 100);
+            sunLight.castShadow = true;
+            sunLight.shadow.mapSize.width = 2048;
+            sunLight.shadow.mapSize.height = 2048;
+            sunLight.shadow.camera.near = 0.5;
+            sunLight.shadow.camera.far = 500;
+            sunLight.shadow.camera.left = -100;
+            sunLight.shadow.camera.right = 100;
+            sunLight.shadow.camera.top = 100;
+            sunLight.shadow.camera.bottom = -100;
+            sunLight.shadow.bias = -0.001;
+            innerWorld.add(sunLight);
+
+            const innerAmbient = new THREE.AmbientLight(0x5a4a3a, 0.6); // Warm ambient
+            innerWorld.add(innerAmbient);
+
+            const hemiLight = new THREE.HemisphereLight(0xdc9c64, 0x3a2a1a, 0.8); // Horizon orange to dark ground
+            innerWorld.add(hemiLight);
+
+            // Vast Flat Rocky/Dusty Terrain
+            const groundGeo = new THREE.PlaneGeometry(800, 800, 128, 128); // Less subdivisions needed for flat terrain
+            const posAttr = groundGeo.attributes.position;
+
+            // Simple CPU hash for micro-roughness
+            const hash = (x, y) => {
+                const s = Math.sin(x * 12.9898 + y * 78.233) * 43758.5453;
+                return s - Math.floor(s);
+            };
+
+            for (let i = 0; i < posAttr.count; i++) {
+                const x = posAttr.getX(i);
+                const y = posAttr.getY(i);
+
+                // Plain, simple, and neat (virtually flat with tiny texture)
+                let z = (hash(x, y) - 0.5) * 0.2;
+
+                posAttr.setZ(i, z);
+            }
+            groundGeo.computeVertexNormals();
+
+            const groundMat = new THREE.MeshStandardMaterial({
+                color: 0x8a5a3a, // Dusty brown/orange base
+                roughness: 0.95,
+                metalness: 0.0,
+                flatShading: false, // Smooth, neat appearance
+                transparent: true,
+                opacity: 0
+            });
+            const groundMesh = new THREE.Mesh(groundGeo, groundMat);
+            groundMesh.rotation.x = -Math.PI / 2;
+            groundMesh.position.y = -10;
+            groundMesh.receiveShadow = true;
+            innerWorld.add(groundMesh);
+
+            // Scattered realistic smaller rocks
+            const rockGeo = new THREE.DodecahedronGeometry(1, 1);
+            // Slightly deform rock geometry for realism
+            const rockPos = rockGeo.attributes.position;
+            for (let i = 0; i < rockPos.count; i++) {
+                rockPos.setX(i, rockPos.getX(i) * (0.8 + Math.random() * 0.4));
+                rockPos.setY(i, rockPos.getY(i) * (0.6 + Math.random() * 0.4));
+                rockPos.setZ(i, rockPos.getZ(i) * (0.8 + Math.random() * 0.4));
+            }
+            rockGeo.computeVertexNormals();
+
+            const rockMat = new THREE.MeshStandardMaterial({
+                color: 0x6a4a3a, // Match terrain closely
+                roughness: 0.85,
+                flatShading: true,
+                transparent: true,
+                opacity: 0
+            });
+            const rockGroup = new THREE.Group();
+            for (let i = 0; i < 400; i++) { // More, but smaller rocks
+                const rock = new THREE.Mesh(rockGeo, rockMat);
+                // Skew towards smaller pebbles with occasional larger rocks
+                const scale = Math.random() > 0.9 ? 1.5 + Math.random() * 2 : 0.2 + Math.random() * 0.8;
+                rock.scale.set(scale, scale, scale);
+
+                const rx = (Math.random() - 0.5) * 400;
+                const rz = (Math.random() - 0.5) * 400;
+
+                // Match rock height to plain, flat terrain
+                let ry = (hash(rx, rz) - 0.5) * 0.2;
+
+                rock.position.set(rx, -10 + ry + scale * 0.3, rz);
+                rock.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, Math.random() * Math.PI);
+                rock.castShadow = true;
+                rock.receiveShadow = true;
+                rockGroup.add(rock);
+            }
+            innerWorld.add(rockGroup);
+
+            // High altitude wispy clouds (like the hazy image)
+            const cloudGroup = new THREE.Group();
+            const cloudMat = new THREE.ShaderMaterial({
+                uniforms: {
+                    uTime: { value: 0 },
+                    uOpacity: { value: 0.3 } // More subtle
+                },
+                vertexShader: cloudVertexShader,
+                fragmentShader: cloudFragmentShader,
+                transparent: true,
+                depthWrite: false,
+                side: THREE.DoubleSide
+            });
+            for (let i = 0; i < 30; i++) {
+                const cGeo = new THREE.PlaneGeometry(150, 80);
+                const cloud = new THREE.Mesh(cGeo, cloudMat);
+                cloud.position.set(
+                    (Math.random() - 0.5) * 600,
+                    Math.random() * 20 + 80, // High up
+                    (Math.random() - 0.5) * 600
+                );
+                cloud.rotation.x = Math.PI / 2;
+                cloudGroup.add(cloud);
+            }
+            innerWorld.add(cloudGroup);
+
+            // Subtle blowing surface dust
+            const sandCount = 1500;
+            const sandGeo = new THREE.BufferGeometry();
+            const sandPos = new Float32Array(sandCount * 3);
+            const sandVel = new Float32Array(sandCount * 3);
+            for (let i = 0; i < sandCount; i++) {
+                sandPos[i * 3] = (Math.random() - 0.5) * 200;
+                sandPos[i * 3 + 1] = Math.random() * 20; // Keep close to ground
+                sandPos[i * 3 + 2] = (Math.random() - 0.5) * 200;
+                sandVel[i * 3] = (Math.random() - 0.5) * 0.4 + 0.1; // Consistent wind direction
+                sandVel[i * 3 + 1] = (Math.random() - 0.5) * 0.02;
+                sandVel[i * 3 + 2] = (Math.random() - 0.5) * 0.1;
+            }
+            sandGeo.setAttribute('position', new THREE.BufferAttribute(sandPos, 3));
+            const sandMat = new THREE.PointsMaterial({ color: 0xebaf7a, size: 0.15, transparent: true, opacity: 0 });
+            const sandParticles = new THREE.Points(sandGeo, sandMat);
+            innerWorld.add(sandParticles);
+
+            innerWorld.userData = { groundMat, skyMat, sandPos, sandVel, sandParticles, cloudGroup, rockGroup, rockMat };
+        }
+
         const ambient = new THREE.AmbientLight(0xffffff, 0.8);
         scene.add(ambient);
         const point = new THREE.PointLight(0xffffff, 100);
@@ -842,26 +1010,33 @@ const animate = (time) => {
         const { sandPos, sandVel, sandParticles, cloudGroup } = planet3D.innerWorld.userData;
 
         // Move and animate clouds
-        cloudGroup.children.forEach((c, i) => {
-            c.position.x += 0.03 * (i % 2 === 0 ? 1 : -1);
-            if (Math.abs(c.position.x) > 500) c.position.x *= -1;
-            if (c.material.uniforms) c.material.uniforms.uTime.value = time;
-        });
-
-        const attr = sandParticles.geometry.attributes.position;
-        for (let i = 0; i < sandPos.length / 3; i++) {
-            sandPos[i * 3] += sandVel[i * 3];
-            sandPos[i * 3 + 1] += sandVel[i * 3 + 1];
-            sandPos[i * 3 + 2] += sandVel[i * 3 + 2];
-
-            if (sandPos[i * 3 + 1] > 30) sandPos[i * 3 + 1] = -30;
-            if (Math.abs(sandPos[i * 3]) > 60) sandPos[i * 3] *= -0.95;
-            if (Math.abs(sandPos[i * 3 + 2]) > 60) sandPos[i * 3 + 2] *= -0.95;
+        if (cloudGroup) {
+            cloudGroup.children.forEach((c, i) => {
+                c.position.x += 0.03 * (i % 2 === 0 ? 1 : -1);
+                if (Math.abs(c.position.x) > 500) c.position.x *= -1;
+                if (c.material.uniforms) c.material.uniforms.uTime.value = time;
+            });
         }
-        attr.needsUpdate = true;
+
+        if (sandParticles && sandParticles.geometry && sandPos && sandPos.length > 0) {
+            const attr = sandParticles.geometry.attributes.position;
+            for (let i = 0; i < sandPos.length / 3; i++) {
+                sandPos[i * 3] += sandVel[i * 3];
+                sandPos[i * 3 + 1] += sandVel[i * 3 + 1];
+                sandPos[i * 3 + 2] += sandVel[i * 3 + 2];
+
+                if (sandPos[i * 3 + 1] > 100) sandPos[i * 3 + 1] = 0;
+                if (sandPos[i * 3 + 1] < 0) sandPos[i * 3 + 1] = 100;
+                if (Math.abs(sandPos[i * 3]) > 100) sandPos[i * 3] *= -0.95;
+                if (Math.abs(sandPos[i * 3 + 2]) > 100) sandPos[i * 3 + 2] *= -0.95;
+            }
+            attr.needsUpdate = true;
+        }
 
         // Update Dino Animations
-        dinoMixers.forEach(mixer => mixer.update(delta));
+        if (dinoMixers) {
+            dinoMixers.forEach(mixer => mixer.update(delta));
+        }
     }
 
     planet3D.renderer.render(planet3D.scene, planet3D.camera);
@@ -930,50 +1105,67 @@ window.addEventListener('load', () => {
         });
     });
 
-    // --- Earth Scroll Transition ---
-    if (document.body.dataset.planet === 'earth') {
+    // --- Planet Scroll Transition ---
+    const currentPlanet = document.body.dataset.planet;
+    if (currentPlanet === 'earth' || currentPlanet === 'saturn') {
         const scrollTl = gsap.timeline({
             scrollTrigger: {
                 trigger: "body",
                 start: "top top",
                 end: "bottom bottom",
-                scrub: 1.5,
+                scrub: currentPlanet === 'saturn' ? 3 : 1.5,
                 pin: ".planet-container" // Pin the container to lock scroll at the end
             }
         });
 
-        // 1. Zoom and move through
-        scrollTl.to(planet3D.camera.position, { z: 1, ease: "power1.inOut" }, 0);
+        const zoomEase = currentPlanet === 'saturn' ? "power2.inOut" : "power1.inOut";
 
-        // 2. Fade Earth and Atmosphere quickly
+        // 1. Zoom and move through
+        scrollTl.to(planet3D.camera.position, { z: 1, ease: zoomEase }, 0);
+
+        // 2. Fade Planet and Atmosphere quickly
         scrollTl.to(planet3D.coreMesh.material.uniforms.uOpacity, { value: 0, ease: "power1.in" }, 0.05);
         if (planet3D.atmosphere) {
             scrollTl.to(planet3D.atmosphere.material.uniforms.uOpacity, { value: 0, ease: "power1.in" }, 0.05);
         }
 
+        // Hide Saturn rings during entry
+        if (currentPlanet === 'saturn' && planet3D.mesh.children) {
+            planet3D.mesh.children.forEach(child => {
+                if (child.geometry && child.geometry.type === 'RingGeometry') {
+                    scrollTl.to(child.material, { opacity: 0, ease: "power1.in" }, 0.05);
+                }
+            });
+        }
 
         // 3. Reveal Inner World
         scrollTl.set(planet3D.innerWorld, { visible: true }, 0.3);
-        scrollTl.to(planet3D.innerWorld.userData.groundMat, { opacity: 1, ease: "none" }, 0.4);
-        scrollTl.to(planet3D.innerWorld.userData.sandMat, { opacity: 0.6, ease: "none" }, 0.4);
-        scrollTl.to(planet3D.innerWorld.userData.skyMat, { opacity: 1, ease: "none" }, 0.4);
+        if (planet3D.innerWorld.userData.groundMat) scrollTl.to(planet3D.innerWorld.userData.groundMat, { opacity: 1, ease: "none" }, 0.4);
+        if (planet3D.innerWorld.userData.rockMat) scrollTl.to(planet3D.innerWorld.userData.rockMat, { opacity: 1, ease: "none" }, 0.4);
+        if (planet3D.innerWorld.userData.sandMat) scrollTl.to(planet3D.innerWorld.userData.sandMat, { opacity: 0.6, ease: "none" }, 0.4);
+        if (planet3D.innerWorld.userData.skyMat) scrollTl.to(planet3D.innerWorld.userData.skyMat, { opacity: 1, ease: "none" }, 0.4);
 
-        // Add Fog on enter (More natural blue/green atmosphere)
+        // Add Fog on enter
+        const fogColor = currentPlanet === 'saturn' ? 0xdc9c64 : 0x88aabb; // Matched to horizon haze
+        const fogDensity = currentPlanet === 'saturn' ? 0.018 : 0.008;
+
         scrollTl.to(planet3D.scene, {
-            onStart: () => { 
-                planet3D.scene.fog = new THREE.FogExp2(0x88aabb, 0.008); 
+            onStart: () => {
+                planet3D.scene.fog = new THREE.FogExp2(fogColor, fogDensity);
                 planet3D.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-                planet3D.renderer.toneMappingExposure = 1.1;
+                planet3D.renderer.toneMappingExposure = 1.0;
             },
-            onReverseComplete: () => { 
-                planet3D.scene.fog = null; 
+            onReverseComplete: () => {
+                planet3D.scene.fog = null;
                 planet3D.renderer.toneMapping = THREE.NoToneMapping;
             }
         }, 0.3);
 
-        // 4. Move camera into the desert (Raised Y to 15 for extra clearance)
-        scrollTl.to(planet3D.camera.position, { z: -35, y: 15, ease: "power1.out" }, 0.3);
-        scrollTl.to(planet3D.camera.rotation, { x: -0.15, ease: "power1.out" }, 0.3);
+        // 4. Move camera into the environment
+        const targetY = currentPlanet === 'saturn' ? 3 : 15; // Lower camera for Saturn to emphasize vastness
+        scrollTl.to(planet3D.camera.position, { z: -35, y: targetY, ease: "power1.out" }, 0.3);
+        const targetRotX = currentPlanet === 'saturn' ? 0.05 : -0.15; // Look slightly up/straight for vast horizon
+        scrollTl.to(planet3D.camera.rotation, { x: targetRotX, ease: "power1.out" }, 0.3);
 
         // 5. Fade out page content as we go in
         scrollTl.to('.planet-container', { opacity: 0, pointerEvents: 'none', duration: 0.5 }, 0.2);
